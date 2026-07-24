@@ -17,6 +17,16 @@ jobs:
     name: Sync With Upstream
     runs-on: ubuntu-24.04
     steps:
+      - name: Accept bot repository invitation if needed
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          invitation_id="$(gh api user/repository_invitations --jq ".[] | select(.repository.full_name == \"${GITHUB_REPOSITORY}\") | .id")"
+          if [[ -n "$invitation_id" ]]; then
+            gh api --method PATCH "user/repository_invitations/${invitation_id}"
+          fi
+
       - name: Checkout benchmark repo
         uses: actions/checkout@v6
         with:
@@ -31,7 +41,9 @@ jobs:
           git config --global user.email "boringcache-bot@users.noreply.github.com"
 
           git submodule sync --recursive
-          git submodule update --init --remote --checkout upstream
+          git submodule update --init --checkout upstream
+          git -C upstream fetch --depth 1 origin dev
+          git -C upstream checkout --detach FETCH_HEAD
 
           github_repo_slug() {
             local url="$1"
