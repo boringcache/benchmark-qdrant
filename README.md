@@ -66,6 +66,29 @@ The Dockerfile already makes dependency compilation ordinary cargo-chef image
 layers. That makes external BuildKit cache the correct first experiment; this
 benchmark does not modify the Dockerfile or add sccache inside the image.
 
+## Measured Result
+
+All rows below ran on GitHub-hosted `ubuntu-latest` runners and built the
+unchanged upstream Dockerfile. Total time includes cache setup and the
+measured Docker build.
+
+| Revision | GHA | BoringCache | Saved | GHA export | BoringCache export |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| [oldest](https://github.com/boringcache/benchmark-qdrant/actions/runs/30086951841) | 771s | 554s | 217s (28%) | 212.7s | 1.5s |
+| [middle](https://github.com/boringcache/benchmark-qdrant/actions/runs/30087851107) | 348s | 211s | 137s (39%) | 76.0s | 2.0s |
+| [newest](https://github.com/boringcache/benchmark-qdrant/actions/runs/30088262858) | 410s | 218s | 192s (47%) | 91.1s | 1.9s |
+
+Across the three real commits, BoringCache averaged 328 seconds versus 510
+seconds for GHA, a 36% reduction. GHA spent an average of 127 seconds exporting
+cache after the build; BoringCache averaged 1.8 seconds.
+
+The final [fresh comparison](https://github.com/boringcache/benchmark-qdrant/actions/runs/30088734650)
+measured a 731-second GHA cold run versus 568 seconds with BoringCache. The
+same-source warm reruns were effectively instant in both lanes: 3 seconds for
+GHA and 7 seconds for BoringCache. As with the rolling series, the commercial
+value is removing transfer tax from changed commits rather than claiming a
+meaningful same-commit warm advantage.
+
 ## Scenarios
 
 - `cold`
