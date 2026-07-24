@@ -48,7 +48,19 @@ transfer costs and do not use a third-party Docker cache accelerator.
 
 Pinned upstream source:
 
-- `94fdd0e74684b9d5299b8deaec6ed3fa908c35ea`
+- `7469834d9b621e7d717ab6d9ed568e38ffa85b18`
+
+## Rolling Proof Series
+
+The benchmark replays these three linear `dev` commits oldest to newest.
+Each commit completed the upstream `Integration tests` workflow, whose e2e
+and consensus jobs build the root Dockerfile:
+
+| Commit | Upstream proof |
+| --- | --- |
+| `3b77388f7e556d02b73121bc93f25c4f37d18a65` | [run 30034960987](https://github.com/qdrant/qdrant/actions/runs/30034960987) |
+| `94fdd0e74684b9d5299b8deaec6ed3fa908c35ea` | [run 30079491988](https://github.com/qdrant/qdrant/actions/runs/30079491988) |
+| `7469834d9b621e7d717ab6d9ed568e38ffa85b18` | [run 30083783806](https://github.com/qdrant/qdrant/actions/runs/30083783806) |
 
 The Dockerfile already makes dependency compilation ordinary cargo-chef image
 layers. That makes external BuildKit cache the correct first experiment; this
@@ -63,10 +75,8 @@ The fresh lane runs a no-prior-cache cold build plus exactly one warm rerun on
 the same pinned source tree. The rolling lane records the upstream commit
 build as-is after each upstream sync and skips `warm1`.
 
-BoringCache uses its external registry/OCI BuildKit cache path. It does not
-run BoringCache inside upstream Dockerfile `RUN` steps. The optional
-BoringCache BuildKit-backend and ECR lanes remain disabled until their
-repository variables are configured.
+The two-entry matrix compares GitHub Actions cache with BoringCache managed
+BuildKit. It does not run BoringCache inside upstream Dockerfile `RUN` steps.
 
 ## Output
 

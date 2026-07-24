@@ -1,6 +1,6 @@
 name: "Qdrant Docker Benchmark"
 run-name: >-
-  ${{ format('Benchmark {0} | {1}', github.event_name == 'pull_request' && 'Validation' || github.event_name == 'workflow_dispatch' && inputs.cli_version != '' && 'Canary' || (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'rolling')) && 'Rolling' || 'Fresh', github.event_name == 'push' && 'Upstream update' || github.event_name == 'schedule' && 'Weekly' || github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || format('Manual dispatch ({0})', github.ref_name)) }}
+  ${{ format('Benchmark {0} | {1}', (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'rolling')) && 'Rolling' || 'Fresh', github.event_name == 'push' && 'Upstream update' || github.event_name == 'schedule' && 'Weekly' || format('Manual dispatch ({0})', github.ref_name)) }}
 
 on:
   workflow_dispatch:
@@ -10,47 +10,27 @@ on:
         required: false
         type: choice
         default: fresh
-        options:
-          - fresh
-          - rolling
-      prewarm_buildkit_image:
-        description: "Optional BuildKit image. When set, the run adds a BC BuildKit backend lane."
+        options: [fresh, rolling]
+      buildkit_image:
+        description: "Optional managed BoringCache BuildKit image."
         required: false
         type: string
         default: ""
       cli_version:
-        description: "Optional BoringCache CLI release tag for canary runs, for example vcli-canary."
+        description: "Optional BoringCache CLI release tag."
         required: false
         type: string
         default: ""
-      cli_platform:
-        description: "Optional BoringCache CLI platform. Canary currently publishes linux-amd64."
-        required: false
-        type: string
-        default: linux-musl-amd64
       benchmark_id_suffix:
-        description: "Optional suffix appended to built-in benchmark/cache scopes for isolated comparison runs."
+        description: "Optional suffix for isolated comparison runs."
         required: false
         type: string
         default: ""
   push:
-    branches:
-      - main
-    paths:
-      - ".gitmodules"
-      - "upstream"
+    branches: [main]
+    paths: [".gitmodules", "upstream"]
   schedule:
     - cron: "0 3 * * 1"
-  pull_request:
-    paths:
-      - ".gitmodules"
-      - ".github/actions/docker-rolling-benchmark/**"
-      - ".github/workflows/qdrant-benchmark.yml"
-      - ".github/workflows/reusable-docker-buildkit-benchmark.yml"
-      - "README.md"
-      - "scenarios/**"
-      - "scripts/**"
-      - "upstream"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
@@ -62,187 +42,32 @@ permissions:
   packages: read
 
 jobs:
-  github-actions-cache:
-    name: GHA
-    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'rolling') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: Checkout benchmark repo
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-          submodules: false
-
-      - name: GHA
-        uses: ./.github/actions/docker-rolling-benchmark
-        with:
-          strategy: actions-cache
-          benchmark_id: qdrant${{ inputs.benchmark_id_suffix }}
-          project_repo: qdrant/qdrant
-          dockerfile_path: upstream/Dockerfile
-          docker_context: upstream
-          docker_build_args: &qdrant-build-args |
-            --build-arg
-            PROFILE=ci
-            --build-arg
-            FEATURES=data-consistency-check,staging
-          image_tag: qdrant-benchmark:latest
-          benchmark_workspace: ${{ github.repository }}
-
-  ecr-cache:
-    name: ECR
-    if: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'rolling')) && vars.DOCKER_BENCHMARK_ECR_ROLE_ARN != '' && vars.DOCKER_BENCHMARK_ECR_REPOSITORY != '' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Checkout benchmark repo
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-          submodules: false
-
-      - name: ECR
-        uses: ./.github/actions/docker-rolling-benchmark
-        with:
-          strategy: ecr-cache
-          benchmark_id: qdrant${{ inputs.benchmark_id_suffix }}
-          project_repo: qdrant/qdrant
-          dockerfile_path: upstream/Dockerfile
-          docker_context: upstream
-          docker_build_args: *qdrant-build-args
-          image_tag: qdrant-benchmark:latest
-          benchmark_workspace: ${{ github.repository }}
-          ecr_region: ${{ vars.DOCKER_BENCHMARK_ECR_REGION || 'us-east-1' }}
-          ecr_role_arn: ${{ vars.DOCKER_BENCHMARK_ECR_ROLE_ARN }}
-          ecr_registry: ${{ vars.DOCKER_BENCHMARK_ECR_REGISTRY }}
-          ecr_repository: ${{ vars.DOCKER_BENCHMARK_ECR_REPOSITORY }}
-
-  boringcache-oci:
-    name: BC OCI
-    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'rolling') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-      BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-      BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN || secrets.BORINGCACHE_RESTORE_TOKEN }}
-    steps:
-      - name: Checkout benchmark repo
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-          submodules: false
-
-      - name: BC OCI
-        uses: ./.github/actions/docker-rolling-benchmark
-        with:
-          strategy: boringcache
-          buildkit_backend: registry
-          benchmark_id: qdrant${{ inputs.benchmark_id_suffix }}
-          project_repo: qdrant/qdrant
-          dockerfile_path: upstream/Dockerfile
-          docker_context: upstream
-          docker_build_args: *qdrant-build-args
-          image_tag: qdrant-benchmark:latest
-          cli_platform: ${{ inputs.cli_platform }}
-          cli_version: ${{ inputs.cli_version }}
-          benchmark_workspace: ${{ github.repository }}
-
-  boringcache-buildkit-backend:
-    name: BC BuildKit Backend
-    if: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'rolling')) && (inputs.prewarm_buildkit_image || vars.QDRANT_PREWARM_BUILDKIT_IMAGE) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-      BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-      BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN || secrets.BORINGCACHE_RESTORE_TOKEN }}
-      BORINGCACHE_GHCR_READ_USER: ${{ vars.BORINGCACHE_GHCR_READ_USER || github.actor }}
-      BORINGCACHE_GHCR_READ_TOKEN: ${{ secrets.BORINGCACHE_GHCR_READ_TOKEN }}
-    steps:
-      - name: Checkout benchmark repo
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-          submodules: false
-
-      - name: BC BuildKit Backend
-        uses: ./.github/actions/docker-rolling-benchmark
-        with:
-          strategy: boringcache
-          buildkit_backend: registry
-          benchmark_id: qdrant-bc-buildkit${{ inputs.benchmark_id_suffix }}
-          project_repo: qdrant/qdrant
-          dockerfile_path: upstream/Dockerfile
-          docker_context: upstream
-          docker_build_args: *qdrant-build-args
-          image_tag: qdrant-benchmark:latest
-          cli_platform: ${{ inputs.cli_platform }}
-          cli_version: ${{ inputs.cli_version }}
-          buildkit_image: ${{ inputs.prewarm_buildkit_image || vars.QDRANT_PREWARM_BUILDKIT_IMAGE }}
-          benchmark_workspace: ${{ github.repository }}
-          buildkit_cache_backend: boringcache
-
-  fresh-github-actions-cache:
-    name: GHA
-    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'fresh') }}
+  benchmark:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: GHA
+            strategy: actions-cache
+          - label: BoringCache
+            strategy: boringcache
     uses: ./.github/workflows/reusable-docker-buildkit-benchmark.yml
     with:
-      strategy: actions-cache
-      cache_lane: fresh
+      strategy: ${{ matrix.strategy }}
+      cache_lane: ${{ github.event_name == 'push' && 'rolling' || github.event_name == 'workflow_dispatch' && inputs.cache_lane || 'fresh' }}
       benchmark_id: ${{ format('qdrant{0}', inputs.benchmark_id_suffix) }}
       project_repo: qdrant/qdrant
       dockerfile_path: upstream/Dockerfile
       docker_context: upstream
-      docker_build_args: *qdrant-build-args
-      image_tag: qdrant-benchmark:latest
-      benchmark_workspace: ${{ github.repository }}
-    secrets: inherit
-
-  fresh-boringcache-oci:
-    name: BC OCI
-    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'fresh') }}
-    uses: ./.github/workflows/reusable-docker-buildkit-benchmark.yml
-    with:
-      strategy: boringcache
-      cache_lane: fresh
-      buildkit_backend: registry
-      benchmark_id: ${{ format('qdrant{0}', inputs.benchmark_id_suffix) }}
-      project_repo: qdrant/qdrant
-      dockerfile_path: upstream/Dockerfile
-      docker_context: upstream
-      docker_build_args: *qdrant-build-args
+      docker_build_args: |
+        --build-arg
+        PROFILE=ci
+        --build-arg
+        FEATURES=data-consistency-check,staging
       image_tag: qdrant-benchmark:latest
       cli_platform: linux-amd64
       cli_version: ${{ inputs.cli_version }}
-      benchmark_workspace: ${{ github.repository }}
-    secrets: inherit
-
-  fresh-boringcache-buildkit-backend:
-    name: BC BuildKit Backend
-    if: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'fresh')) && (inputs.prewarm_buildkit_image || vars.QDRANT_PREWARM_BUILDKIT_IMAGE) }}
-    uses: ./.github/workflows/reusable-docker-buildkit-benchmark.yml
-    with:
-      strategy: boringcache
-      cache_lane: fresh
-      buildkit_backend: registry
-      buildkit_cache_backend: boringcache
-      benchmark_id: ${{ format('qdrant-bc-buildkit{0}', inputs.benchmark_id_suffix) }}
-      project_repo: qdrant/qdrant
-      dockerfile_path: upstream/Dockerfile
-      docker_context: upstream
-      docker_build_args: *qdrant-build-args
-      image_tag: qdrant-benchmark:latest
-      cli_platform: linux-amd64
-      cli_version: ${{ inputs.cli_version }}
-      buildkit_image: ${{ inputs.prewarm_buildkit_image || vars.QDRANT_PREWARM_BUILDKIT_IMAGE }}
+      buildkit_image: ${{ matrix.strategy == 'boringcache' && (inputs.buildkit_image || 'ghcr.io/boringcache/buildkit:v0.30.0-bc') || 'mirror.gcr.io/moby/buildkit:buildx-stable-1' }}
       benchmark_workspace: ${{ github.repository }}
     secrets: inherit

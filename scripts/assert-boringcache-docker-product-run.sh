@@ -4,7 +4,7 @@
 #
 # BuildKit vertex spans are harvested from the managed daemon after the wrapped
 # command exits. Their presence therefore proves that the benchmark crossed the
-# CLI-owned `boringcache docker --backend boringcache -- ...` lifecycle instead
+# CLI-owned `boringcache docker -- ...` lifecycle instead
 # of combining setup-only cache wiring with a raw Docker command.
 #
 set -euo pipefail
@@ -19,7 +19,7 @@ fail() {
   exit 1
 }
 
-product_path_hint="Run the build through 'boringcache docker --backend boringcache -- ...'; setup-only plus raw Docker is not the managed product path."
+product_path_hint="Run the build through 'boringcache docker -- ...'; setup-only plus raw Docker is not the managed product path."
 
 [[ -n "$observability_path" ]] || fail "pass the observability JSONL path or set BORINGCACHE_OBSERVABILITY_JSONL_PATH"
 [[ -s "$observability_path" ]] || fail "missing observability JSONL at ${observability_path}"

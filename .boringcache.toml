@@ -1,5 +1,5 @@
 workspace = "boringcache/benchmark-qdrant"
 
-# Docker BuildKit registry cache benchmark. The OCI cache is the only measured
-# BoringCache surface, so there are no archive entries. Qdrant's upstream
-# cargo-chef Dockerfile remains untouched.
+# Managed BuildKit is the only BoringCache cache surface measured here, so
+# there are no archive entries. Qdrant's upstream cargo-chef Dockerfile remains
+# untouched.
