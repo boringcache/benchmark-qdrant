@@ -48,7 +48,8 @@ transfer costs and do not use a third-party Docker cache accelerator.
 
 Pinned upstream source:
 
-- `7469834d9b621e7d717ab6d9ed568e38ffa85b18`
+- see the committed `upstream/` submodule on `main`; the measured proof series
+  below remains fixed
 
 ## Rolling Proof Series
 
