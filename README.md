@@ -2,6 +2,9 @@
 
 Isolated Qdrant Docker cache benchmark for BoringCache versus GitHub Actions cache.
 
+Stable BoringCache workflows install the verified CLI `v1.14.0` release;
+canary dispatches must use an exact immutable CLI tag.
+
 Qdrant is a strong evidence-first prospect because its public integration
 workflow builds the same Rust-in-Docker image twice and exports two
 `type=gha,mode=max` caches on successful `dev` pushes. The repository also has
@@ -111,5 +114,3 @@ ingestion by the central `boringcache/benchmarks` publisher.
 
 - `BORINGCACHE_RESTORE_TOKEN` for read-only restore and proxy access
 - `BORINGCACHE_SAVE_TOKEN` for trusted write paths
-- `BORINGCACHE_API_TOKEN` only where a single bearer variable is still
-  required for compatibility
