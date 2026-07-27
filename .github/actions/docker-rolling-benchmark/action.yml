@@ -6,7 +6,7 @@ inputs:
     required: true
   buildkit_image:
     required: false
-    default: ghcr.io/boringcache/buildkit:v0.30.0-bc
+    default: ghcr.io/boringcache/buildkit@sha256:9b44a5426d7e32db41584c8d7d9f5251b0ad8348427e15849b541418030e7dab
   benchmark_id:
     required: true
   project_repo:
@@ -97,16 +97,10 @@ runs:
         username: ${{ env.BORINGCACHE_GHCR_READ_USER || github.actor }}
         password: ${{ env.BORINGCACHE_GHCR_READ_TOKEN || github.token }}
 
-    - name: Install BoringCache CLI with boringcache/one
+    - name: Install BoringCache CLI
       if: ${{ inputs.strategy == 'boringcache' }}
-      uses: boringcache/one@v1
-      with:
-        setup: none
-        mode: archive
-        workspace: ${{ inputs.benchmark_workspace }}
-        cli-version: ${{ inputs.cli_version }}
-        cli-platform: ${{ inputs.cli_platform }}
-        cache-runtime: false
+      shell: bash
+      run: ./scripts/install-boringcache-cli.sh '${{ inputs.cli_version }}' '${{ inputs.cli_platform }}'
 
     - name: Checkout pinned upstream submodule shallowly
       shell: bash

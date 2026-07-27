@@ -885,10 +885,6 @@ collect_default_product_refs() {
     fi
   fi
 
-  if [[ -z "$action_ref" && "$strategy" == "boringcache" ]]; then
-    action_ref="boringcache/one@v1"
-  fi
-
   if [[ -z "$action_sha" && "$action_ref" =~ ^([^@]+)@(.+)$ ]]; then
     local action_repo="${BASH_REMATCH[1]}"
     local action_ref_name="${BASH_REMATCH[2]}"
@@ -991,7 +987,7 @@ session_summary_payload_from_inputs() {
     fi
   fi
 
-  local token="${BORINGCACHE_RESTORE_TOKEN:-${BORINGCACHE_API_TOKEN:-}}"
+  local token="${BORINGCACHE_RESTORE_TOKEN:-}"
   local run_identity="${run_uid:-${GITHUB_RUN_ID:-}}"
   local provider_run_identity="${GITHUB_RUN_ID:-}"
   local display_run_identity=""
