@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:-v1.13.105}"
+version="${1:-v1.14.0}"
 platform="${2:-linux-amd64}"
 
 [[ "$version" =~ ^[A-Za-z0-9._-]+$ ]] || {
