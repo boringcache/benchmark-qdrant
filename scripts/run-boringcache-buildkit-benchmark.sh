@@ -135,6 +135,14 @@ write_build_metrics() {
   fi
 }
 
+write_mountcache_log() {
+  local output_path="${BENCHMARK_MOUNTCACHE_LOG_OUTPUT:-}"
+  [[ -n "$output_path" ]] || return 0
+
+  mkdir -p "$(dirname "$output_path")"
+  grep -F 'boringcache cache mount' "$build_log" > "$output_path" || :
+}
+
 capture_proxy_status() {
   local output_path="${1:-$status_snapshot_path}"
   curl -fsS "http://127.0.0.1:${proxy_port}/_boringcache/status" -o "$output_path" 2>/dev/null || true
@@ -320,6 +328,7 @@ while true; do
   capture_proxy_status
   write_build_metrics
   write_build_diagnostics
+  write_mountcache_log
   ./scripts/assert-boringcache-docker-product-run.sh "${BORINGCACHE_OBSERVABILITY_JSONL_PATH:-}"
   break
   fi
@@ -327,5 +336,6 @@ while true; do
   echo "Build (${mode}) failed" >&2
   tail -n 200 "$build_log" || true
   write_build_diagnostics
+  write_mountcache_log
   exit "$status"
 done

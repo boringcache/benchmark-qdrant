@@ -26,6 +26,11 @@ on:
         required: false
         type: string
         default: ""
+      target_mountcache:
+        description: "Use a Cargo target cache mount; BoringCache offloads it between builders."
+        required: false
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths: [".gitmodules", "upstream"]
@@ -56,9 +61,13 @@ jobs:
     with:
       strategy: ${{ matrix.strategy }}
       cache_lane: ${{ github.event_name == 'push' && 'rolling' || github.event_name == 'workflow_dispatch' && inputs.cache_lane || 'fresh' }}
-      benchmark_id: ${{ format('qdrant{0}', inputs.benchmark_id_suffix) }}
+      benchmark_id: ${{ format('qdrant{0}{1}', inputs.target_mountcache && '-target-mountcache' || '', inputs.benchmark_id_suffix) }}
       project_repo: qdrant/qdrant
-      dockerfile_path: upstream/Dockerfile
+      dockerfile_path: ${{ inputs.target_mountcache && '.benchmark/qdrant-target-mountcache.Dockerfile' || 'upstream/Dockerfile' }}
+      target_mountcache: ${{ inputs.target_mountcache }}
+      target_mountcache_renderer: scripts/render-qdrant-target-mountcache-dockerfile.sh
+      target_mountcache_dockerfile_output: .benchmark/qdrant-target-mountcache.Dockerfile
+      target_mountcache_id_pattern: ^qdrant-cargo-target$
       docker_context: upstream
       docker_build_args: |
         --build-arg

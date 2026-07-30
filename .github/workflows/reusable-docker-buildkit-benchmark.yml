@@ -24,6 +24,26 @@ on:
         required: false
         type: string
         default: upstream/Dockerfile
+      target_mountcache:
+        description: "Enable BoringCache BuildKit cache-mount offload for a generated target-mount Dockerfile."
+        required: false
+        type: boolean
+        default: false
+      target_mountcache_renderer:
+        description: "Repository-relative renderer for the target-mount Dockerfile."
+        required: false
+        type: string
+        default: ''
+      target_mountcache_dockerfile_output:
+        description: "Repository-relative output path for the generated target-mount Dockerfile."
+        required: false
+        type: string
+        default: ''
+      target_mountcache_id_pattern:
+        description: "Regular expression matching the Cargo target cache-mount id."
+        required: false
+        type: string
+        default: ''
       docker_context:
         required: false
         type: string
@@ -79,6 +99,10 @@ env:
   BORINGCACHE_MANAGED_BUILDKIT_IMAGE: ${{ inputs.buildkit_image }}
   BUILDKIT_IMAGE: ${{ inputs.buildkit_image }}
   DOCKER_BUILD_EXTRA_ARGS: ${{ inputs.docker_build_args }}
+  BORINGCACHE_BUILDKIT_MOUNTCACHE_OFFLOADER: ${{ inputs.target_mountcache && inputs.strategy == 'boringcache' && '1' || '' }}
+  TARGET_MOUNTCACHE_RENDERER: ${{ inputs.target_mountcache_renderer }}
+  TARGET_MOUNTCACHE_DOCKERFILE_OUTPUT: ${{ inputs.target_mountcache_dockerfile_output }}
+  TARGET_MOUNTCACHE_ID_PATTERN: ${{ inputs.target_mountcache_id_pattern }}
   PREPARE_COMMAND: ${{ inputs.prepare_command }}
   PREPARE_INSTALL_COMMAND: ${{ inputs.prepare_install_command }}
   PREPARE_NODE_VERSION: ${{ inputs.prepare_node_version }}
@@ -151,6 +175,17 @@ jobs:
 
       - name: Prepare base benchmark source tree
         run: ./scripts/prepare-source.sh base
+
+      - name: Derive target mountcache Dockerfile
+        if: inputs.target_mountcache
+        run: |
+          set -euo pipefail
+          if [[ -z "$TARGET_MOUNTCACHE_RENDERER" || -z "$TARGET_MOUNTCACHE_DOCKERFILE_OUTPUT" ]]; then
+            echo "target_mountcache requires a renderer and output path" >&2
+            exit 1
+          fi
+          "$TARGET_MOUNTCACHE_RENDERER" "$TARGET_MOUNTCACHE_DOCKERFILE_OUTPUT"
+          test -s "$TARGET_MOUNTCACHE_DOCKERFILE_OUTPUT"
 
       - name: Setup Node for Docker build artifacts
         if: inputs.prepare_install_command != '' || inputs.prepare_command != ''
@@ -262,6 +297,7 @@ jobs:
           CACHE_SCOPE_PRIMARY: ${{ steps.scope.outputs.cache_scope_primary }}
           CACHE_SCOPE_FALLBACK: ${{ steps.scope.outputs.cache_scope_fallback }}
           BORINGCACHE_OBSERVABILITY_JSONL_PATH: ${{ runner.temp }}/${{ inputs.benchmark_id }}-boringcache-build-observability.jsonl
+          BENCHMARK_MOUNTCACHE_LOG_OUTPUT: ${{ runner.temp }}/${{ inputs.benchmark_id }}-mountcache.log
           IMAGE_TAG: ${{ inputs.image_tag }}
           DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
           BENCHMARK_DOCKER_CONTEXT: ${{ inputs.docker_context }}
@@ -411,6 +447,27 @@ jobs:
             echo "buildkit_cached_steps=${cached_steps}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Capture Cargo target mount growth
+        if: inputs.strategy == 'boringcache' && inputs.target_mountcache && always()
+        env:
+          MOUNTCACHE_LOG: ${{ runner.temp }}/${{ inputs.benchmark_id }}-mountcache.log
+        run: |
+          set -euo pipefail
+          test -n "$TARGET_MOUNTCACHE_ID_PATTERN"
+          test -s "$MOUNTCACHE_LOG"
+          ./scripts/collect-rust-target-mount-evidence.py \
+            --log "$MOUNTCACHE_LOG" \
+            --cache-id-pattern "$TARGET_MOUNTCACHE_ID_PATTERN" \
+            --output benchmark-target-state/rust-target-mount-growth.json
+
+      - name: Upload Cargo target mount growth
+        if: inputs.strategy == 'boringcache' && inputs.target_mountcache && always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-target-${{ inputs.benchmark_id }}-boringcache-${{ inputs.cache_lane }}
+          path: benchmark-target-state/rust-target-mount-growth.json
+          if-no-files-found: error
+
       - name: Upload build diagnostics
         if: inputs.strategy == 'boringcache' && always()
         uses: actions/upload-artifact@v6
@@ -430,6 +487,12 @@ jobs:
       - name: Prepare warm source tree
         if: inputs.cache_lane != 'rolling'
         run: ./scripts/prepare-source.sh warm1
+
+      - name: Derive warm target mountcache Dockerfile
+        if: inputs.cache_lane != 'rolling' && inputs.target_mountcache
+        run: |
+          "$TARGET_MOUNTCACHE_RENDERER" "$TARGET_MOUNTCACHE_DOCKERFILE_OUTPUT"
+          test -s "$TARGET_MOUNTCACHE_DOCKERFILE_OUTPUT"
 
       - name: Install warm Docker build artifact dependencies
         if: inputs.cache_lane != 'rolling' && inputs.prepare_install_command != ''
