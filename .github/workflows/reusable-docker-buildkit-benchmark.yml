@@ -451,12 +451,15 @@ jobs:
         if: inputs.strategy == 'boringcache' && inputs.target_mountcache && always()
         env:
           MOUNTCACHE_LOG: ${{ runner.temp }}/${{ inputs.benchmark_id }}-mountcache.log
+          OBSERVABILITY_JSONL: ${{ runner.temp }}/${{ inputs.benchmark_id }}-boringcache-build-observability.jsonl
         run: |
           set -euo pipefail
           test -n "$TARGET_MOUNTCACHE_ID_PATTERN"
           test -s "$MOUNTCACHE_LOG"
+          test -s "$OBSERVABILITY_JSONL"
           ./scripts/collect-rust-target-mount-evidence.py \
             --log "$MOUNTCACHE_LOG" \
+            --observability-jsonl "$OBSERVABILITY_JSONL" \
             --cache-id-pattern "$TARGET_MOUNTCACHE_ID_PATTERN" \
             --output benchmark-target-state/rust-target-mount-growth.json
 
