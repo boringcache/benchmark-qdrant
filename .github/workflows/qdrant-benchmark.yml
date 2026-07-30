@@ -67,7 +67,7 @@ jobs:
       target_mountcache: ${{ inputs.target_mountcache }}
       target_mountcache_renderer: scripts/render-qdrant-target-mountcache-dockerfile.sh
       target_mountcache_dockerfile_output: .benchmark/qdrant-target-mountcache.Dockerfile
-      target_mountcache_id_pattern: ^qdrant-cargo-target$
+      target_mountcache_id_pattern: ^/?qdrant-cargo-target$
       docker_context: upstream
       docker_build_args: |
         --build-arg

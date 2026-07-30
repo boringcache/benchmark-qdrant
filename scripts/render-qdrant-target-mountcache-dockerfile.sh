@@ -42,13 +42,19 @@ awk '
   /xx-cargo chef cook .*--recipe-path recipe.json$/ {
     print
     print ""
-    print "# Benchmark option: preserve first-party Cargo state without shadowing cooked dependencies."
+    print "# Keep cargo-chef output in an ordinary layer so the cache mount starts empty for hydration."
+    print "RUN mv /qdrant/target /qdrant/target-dependency-seed"
+    print ""
+    print "# Benchmark option: preserve first-party Cargo state with an empty-cache fallback."
     print "FROM dependency-builder AS builder"
     cooked = 1
     next
   }
   cooked && /^RUN PKG_CONFIG=/ {
-    print "RUN --mount=type=cache,id=qdrant-cargo-target,sharing=locked,from=dependency-builder,source=/qdrant/target,target=/qdrant/target \\"
+    print "RUN --mount=type=cache,id=qdrant-cargo-target,sharing=locked,target=/qdrant/target \\"
+    print "    if [ -z \"$(find /qdrant/target -mindepth 1 -maxdepth 1 -print -quit)\" ]; then \\"
+    print "      cp -a /qdrant/target-dependency-seed/. /qdrant/target/; \\"
+    print "    fi && \\"
     sub(/^RUN /, "    ")
     print
     build_mount += 1

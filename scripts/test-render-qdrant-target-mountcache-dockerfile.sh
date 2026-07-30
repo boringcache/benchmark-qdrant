@@ -11,8 +11,14 @@ rendered="$test_root/Dockerfile"
 
 [[ "$(grep -Fc 'FROM chef AS dependency-builder' "$rendered")" -eq 1 ]]
 [[ "$(grep -Fc 'FROM dependency-builder AS builder' "$rendered")" -eq 1 ]]
+[[ "$(grep -Fc 'mv /qdrant/target /qdrant/target-dependency-seed' "$rendered")" -eq 1 ]]
 [[ "$(grep -Fc 'id=qdrant-cargo-target' "$rendered")" -eq 1 ]]
-[[ "$(grep -Fc 'from=dependency-builder,source=/qdrant/target,target=/qdrant/target' "$rendered")" -eq 1 ]]
+[[ "$(grep -Fc 'sharing=locked,target=/qdrant/target' "$rendered")" -eq 1 ]]
+[[ "$(grep -Fc 'cp -a /qdrant/target-dependency-seed/. /qdrant/target/' "$rendered")" -eq 1 ]]
+if grep -Fq 'from=dependency-builder' "$rendered"; then
+  echo "Rendered cache mount must be empty before the offloader hydrates it." >&2
+  exit 1
+fi
 [[ "$(grep -Ec 'xx-cargo chef cook .*--recipe-path recipe.json$' "$rendered")" -eq 1 ]]
 [[ "$(grep -Ec 'xx-cargo build .*--bin qdrant' "$rendered")" -eq 1 ]]
 

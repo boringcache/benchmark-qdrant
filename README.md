@@ -71,8 +71,9 @@ layers. That makes external BuildKit cache the correct first experiment; this
 benchmark does not modify the Dockerfile or add sccache inside the image.
 
 Manual runs can opt into `target_mountcache`. The benchmark then derives a
-Dockerfile that seeds a native Cargo target cache mount from the cargo-chef
-dependency stage. The Actions/cache lane receives the same valid empty-mount
+Dockerfile that keeps cargo-chef output in an ordinary-layer seed and copies it
+only when an initially empty Cargo target mount was not hydrated. The
+Actions/cache lane receives the same valid empty-mount
 fallback; BoringCache additionally offloads the mount between builders. The
 option uses an isolated benchmark suffix, so it cannot replace or contaminate
 the ordinary-layer baseline. Each BoringCache run also publishes a
