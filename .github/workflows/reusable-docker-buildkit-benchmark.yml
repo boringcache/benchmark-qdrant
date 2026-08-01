@@ -13,7 +13,7 @@ on:
       buildkit_image:
         required: false
         type: string
-        default: ghcr.io/boringcache/buildkit@sha256:9b44a5426d7e32db41584c8d7d9f5251b0ad8348427e15849b541418030e7dab
+        default: ''
       benchmark_id:
         required: true
         type: string
