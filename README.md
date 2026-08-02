@@ -2,7 +2,7 @@
 
 Isolated Qdrant Docker cache benchmark for BoringCache versus GitHub Actions cache.
 
-Stable BoringCache workflows install the verified CLI `v1.16.3` release;
+Stable BoringCache workflows install the verified CLI `v1.16.4` release;
 canary dispatches must use an exact immutable CLI tag.
 
 Qdrant is a strong evidence-first prospect because its public integration
