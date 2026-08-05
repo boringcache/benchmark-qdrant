@@ -50,7 +50,7 @@ runs:
           --load upstream
     - name: Publish with BoringCache
       if: inputs.strategy == 'boringcache' && inputs.phase == 'publish'
-      uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
+      uses: boringcache/one@366e1aa37c271014d69aa6e1a12df57c472fdf5d # v1.16.9
       with:
         cli-version: ${{ inputs.cli_version }}
         setup: none
@@ -69,7 +69,7 @@ runs:
         managed-buildkit-image: ${{ inputs.buildkit_image }}
     - name: Restore with BoringCache
       if: inputs.strategy == 'boringcache' && inputs.phase == 'warm'
-      uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
+      uses: boringcache/one@366e1aa37c271014d69aa6e1a12df57c472fdf5d # v1.16.9
       with:
         cli-version: ${{ inputs.cli_version }}
         setup: none
