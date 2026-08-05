@@ -1,5 +1,4 @@
 workspace = "boringcache/benchmark-qdrant"
 
-# Managed BuildKit is the only BoringCache cache surface measured here, so
-# there are no archive entries. Qdrant's upstream cargo-chef Dockerfile remains
-# untouched.
+[adapters.docker]
+tag = "qdrant-docker-local"

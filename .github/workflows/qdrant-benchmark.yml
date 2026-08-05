@@ -29,6 +29,15 @@ on:
   push:
     branches: [main]
     paths: [".gitmodules", "upstream"]
+  pull_request:
+    paths:
+      - ".boringcache.toml"
+      - ".gitmodules"
+      - ".github/workflows/qdrant-benchmark.yml"
+      - ".github/workflows/reusable-qdrant-docker-benchmark.yml"
+      - "scripts/prepare-source.sh"
+      - "scripts/scope-boringcache-run.sh"
+      - "upstream"
   schedule:
     - cron: "0 3 * * 1"
 
@@ -52,22 +61,11 @@ jobs:
             strategy: actions-cache
           - label: BoringCache
             strategy: boringcache
-    uses: ./.github/workflows/reusable-docker-buildkit-benchmark.yml
+    uses: ./.github/workflows/reusable-qdrant-docker-benchmark.yml
     with:
       strategy: ${{ matrix.strategy }}
       cache_lane: ${{ github.event_name == 'push' && 'rolling' || github.event_name == 'workflow_dispatch' && inputs.cache_lane || 'fresh' }}
       benchmark_id: ${{ format('qdrant{0}', inputs.benchmark_id_suffix) }}
-      project_repo: qdrant/qdrant
-      dockerfile_path: upstream/Dockerfile
-      docker_context: upstream
-      docker_build_args: |
-        --build-arg
-        PROFILE=ci
-        --build-arg
-        FEATURES=data-consistency-check,staging
-      image_tag: qdrant-benchmark:latest
-      cli_platform: linux-amd64
       cli_version: ${{ inputs.cli_version }}
-      buildkit_image: ${{ matrix.strategy == 'actions-cache' && 'mirror.gcr.io/moby/buildkit:buildx-stable-1' || inputs.buildkit_image }}
-      benchmark_workspace: ${{ github.repository }}
+      buildkit_image: ${{ inputs.buildkit_image }}
     secrets: inherit
