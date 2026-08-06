@@ -40,14 +40,18 @@ runs:
       uses: docker/setup-buildx-action@v4
     - name: Build with the GitHub Actions cache
       if: inputs.strategy == 'actions-cache'
-      shell: bash
-      env:
-        CACHE_SCOPE: ${{ steps.scope.outputs.cache_scope }}
-      run: |
-        docker buildx build --file upstream/Dockerfile --tag qdrant-benchmark:latest \
-          --build-arg PROFILE=ci --build-arg FEATURES=data-consistency-check,staging \
-          --cache-from "type=gha,scope=${CACHE_SCOPE}" --cache-to "type=gha,scope=${CACHE_SCOPE},mode=max" \
-          --load upstream
+      uses: docker/build-push-action@v6
+      with:
+        context: upstream
+        file: upstream/Dockerfile
+        tags: qdrant-benchmark:latest
+        build-args: |
+          PROFILE=ci
+          FEATURES=data-consistency-check,staging
+        load: true
+        provenance: false
+        cache-from: type=gha,scope=${{ steps.scope.outputs.cache_scope }}
+        cache-to: type=gha,scope=${{ steps.scope.outputs.cache_scope }},mode=max
     - name: Publish with BoringCache
       if: inputs.strategy == 'boringcache' && inputs.phase == 'publish'
       uses: boringcache/one@366e1aa37c271014d69aa6e1a12df57c472fdf5d # v1.16.9
