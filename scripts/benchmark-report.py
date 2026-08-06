@@ -12,7 +12,17 @@ SCHEMA_VERSION = 1
 PROVIDER_LABELS = {
     "actions-cache": "GitHub Actions",
     "boringcache": "BoringCache",
+    "boringcache-mountcache": "BoringCache mountcache",
+    "boringcache-native": "BoringCache native",
+    "boringcache-toolcache": "BoringCache toolcache",
+    "boringcache-turbo": "BoringCache Turbo",
+    "buildbuddy": "BuildBuddy",
+    "buildbuddy-cache": "BuildBuddy",
+    "ecr-cache": "Amazon ECR",
 }
+
+BASELINE_STRATEGY = "actions-cache"
+CANDIDATE_STRATEGY = "boringcache"
 
 PHASE_LABELS = {
     "cold": "Cold build",
@@ -38,7 +48,7 @@ def parse_args() -> argparse.Namespace:
 
     phase = subparsers.add_parser("phase")
     phase.add_argument("--benchmark", required=True)
-    phase.add_argument("--strategy", required=True, choices=sorted(PROVIDER_LABELS))
+    phase.add_argument("--strategy", required=True)
     phase.add_argument("--lane", required=True, choices=sorted(LANE_PHASES))
     phase.add_argument("--phase", required=True, choices=sorted(PHASE_LABELS))
     phase.add_argument("--mode", required=True)
@@ -78,93 +88,6 @@ def load_evidence(path: str | None) -> dict[str, Any] | None:
     if not evidence_path.is_file():
         return None
     return json.loads(evidence_path.read_text())
-
-
-def classify(phase: str, cache_hit: bool | None, import_ready: bool | None) -> dict[str, Any]:
-    if phase == "cold":
-        return {
-            "sample_valid": True,
-            "reporting_mode": "comparative",
-            "reporting_reason": None,
-            "validity_reason": "cold build against an empty cache cohort",
-            "cache_import_status": "cold",
-            "rolling_reseed": None,
-            "steady_state_candidate": None,
-        }
-
-    if phase == "warm":
-        if cache_hit is None:
-            return {
-                "sample_valid": True,
-                "reporting_mode": "comparative",
-                "reporting_reason": None,
-                "validity_reason": "provider does not expose warm restore evidence",
-                "cache_import_status": "unknown",
-                "rolling_reseed": None,
-                "steady_state_candidate": None,
-            }
-        if cache_hit:
-            return {
-                "sample_valid": True,
-                "reporting_mode": "comparative",
-                "reporting_reason": None,
-                "validity_reason": "warm build restored the cold cache on a fresh runner",
-                "cache_import_status": "hit",
-                "rolling_reseed": None,
-                "steady_state_candidate": None,
-            }
-        return {
-            "sample_valid": False,
-            "reporting_mode": "invalid",
-            "reporting_reason": "fresh_warm_cache_import_not_ok",
-            "validity_reason": "fresh_warm_cache_import_not_ok",
-            "cache_import_status": "miss",
-            "rolling_reseed": None,
-            "steady_state_candidate": None,
-        }
-
-    if import_ready is False:
-        return {
-            "sample_valid": True,
-            "reporting_mode": "investigation_only",
-            "reporting_reason": "rolling_cache_import_not_ok",
-            "validity_reason": None,
-            "cache_import_status": "import_not_ready",
-            "rolling_reseed": True,
-            "steady_state_candidate": False,
-        }
-
-    if cache_hit is None:
-        return {
-            "sample_valid": True,
-            "reporting_mode": "comparative",
-            "reporting_reason": None,
-            "validity_reason": "provider does not expose cache import evidence",
-            "cache_import_status": "unknown",
-            "rolling_reseed": None,
-            "steady_state_candidate": None,
-        }
-
-    if cache_hit:
-        return {
-            "sample_valid": True,
-            "reporting_mode": "comparative",
-            "reporting_reason": None,
-            "validity_reason": "commit build imported the prior rolling cache",
-            "cache_import_status": "hit",
-            "rolling_reseed": False,
-            "steady_state_candidate": True,
-        }
-
-    return {
-        "sample_valid": True,
-        "reporting_mode": "investigation_only",
-        "reporting_reason": "rolling_cache_bootstrap",
-        "validity_reason": None,
-        "cache_import_status": "miss",
-        "rolling_reseed": True,
-        "steady_state_candidate": False,
-    }
 
 
 def github_identity() -> dict[str, Any]:
@@ -230,7 +153,6 @@ def write_phase(args: argparse.Namespace) -> int:
             "sha": args.source_sha or None,
         },
         "action": evidence_action_versions(evidence),
-        "classification": classify(args.phase, cache_hit, import_ready),
         "github": github_identity(),
         "run_uid": run_uid(),
     }
@@ -272,10 +194,13 @@ def merge_lane(benchmark: str, strategy: str, lane: str, phases: list[dict[str, 
     if reference is None:
         raise SystemExit(f"no usable phase evidence for {benchmark} {strategy} {lane}")
 
-    classifications = [payload["classification"] for payload in phases]
-    invalid = [item for item in classifications if item["sample_valid"] is False]
-    investigation = [item for item in classifications if item["reporting_mode"] == "investigation_only"]
-    classification = invalid[0] if invalid else (investigation[0] if investigation else reference["classification"])
+    observations = {
+        payload["phase"]: {
+            "cache_hit": payload["cache"]["hit"],
+            "cache_import_ready": payload["cache"]["import_ready"],
+        }
+        for payload in phases
+    }
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -288,7 +213,7 @@ def merge_lane(benchmark: str, strategy: str, lane: str, phases: list[dict[str, 
         "speed": {"warm_average_seconds": warm["timing"]["total_seconds"] if warm else None},
         "cache": reference["cache"],
         "source": reference["source"],
-        "classification": classification,
+        "phase_observations": observations,
         "workspace": reference["cache"]["workspace"],
         "cache_tag": reference["cache"]["tag"],
         "run_uid": reference["run_uid"],
@@ -330,11 +255,16 @@ def render_markdown(title: str, lanes: dict[tuple[str, str], dict[str, Any]], ph
     lane_names = sorted({lane for _, lane in lanes})
 
     for lane in lane_names:
-        baseline = lanes.get(("actions-cache", lane))
-        candidate = lanes.get(("boringcache", lane))
+        baseline = lanes.get((BASELINE_STRATEGY, lane))
+        candidate = lanes.get((CANDIDATE_STRATEGY, lane))
         reference = candidate or baseline
         if reference is None:
             continue
+
+        lane_strategies = sorted(
+            {strategy for strategy, item in lanes if item == lane},
+            key=lambda strategy: (strategy != CANDIDATE_STRATEGY, strategy != BASELINE_STRATEGY, strategy),
+        )
 
         lines.append(f"### {lane.capitalize()} lane")
         lines.append("")
@@ -342,7 +272,7 @@ def render_markdown(title: str, lanes: dict[tuple[str, str], dict[str, Any]], ph
         lines.append("| --- | --- | ---: | ---: | ---: | --- |")
 
         for phase_name in LANE_PHASES[lane]:
-            for strategy in ("boringcache", "actions-cache"):
+            for strategy in lane_strategies:
                 payload = next(
                     (
                         item
@@ -355,7 +285,7 @@ def render_markdown(title: str, lanes: dict[tuple[str, str], dict[str, Any]], ph
                     continue
                 timing = payload["timing"]
                 lines.append(
-                    f"| {PROVIDER_LABELS[strategy]} | {PHASE_LABELS[phase_name]} "
+                    f"| {PROVIDER_LABELS.get(strategy, strategy)} | {PHASE_LABELS[phase_name]} "
                     f"| {format_seconds(timing['restore_or_setup_seconds'])} "
                     f"| {format_seconds(timing['build_seconds'])} "
                     f"| {format_seconds(timing['total_seconds'])} "
@@ -364,35 +294,25 @@ def render_markdown(title: str, lanes: dict[tuple[str, str], dict[str, Any]], ph
 
         lines.append("")
 
-        comparative = all(
-            payload["classification"]["reporting_mode"] == "comparative"
-            for payload in (baseline, candidate)
-            if payload is not None
-        )
-
-        if baseline and candidate and comparative:
+        if baseline and candidate:
             for phase_name in LANE_PHASES[lane]:
                 total_field = PHASE_RUN_FIELDS[phase_name][0]
                 before = baseline["runs"].get(total_field)
                 after = candidate["runs"].get(total_field)
                 if before is None or after is None:
                     continue
+                observed = (candidate.get("phase_observations") or {}).get(phase_name, {})
+                if phase_name != "cold" and (observed.get("cache_hit") is False or observed.get("cache_import_ready") is False):
+                    lines.append(
+                        f"- {PHASE_LABELS[phase_name]}: {PROVIDER_LABELS[CANDIDATE_STRATEGY]} found no cache to import, "
+                        "so these timings are not like-for-like."
+                    )
+                    continue
                 lines.append(
-                    f"- {PHASE_LABELS[phase_name]}: BoringCache {format_seconds(after)} "
-                    f"vs GitHub Actions {format_seconds(before)} — **{format_delta(before, after)}**"
+                    f"- {PHASE_LABELS[phase_name]}: {PROVIDER_LABELS[CANDIDATE_STRATEGY]} {format_seconds(after)} "
+                    f"vs {PROVIDER_LABELS[BASELINE_STRATEGY]} {format_seconds(before)} — **{format_delta(before, after)}**"
                 )
             lines.append("")
-
-        classification = reference["classification"]
-        lines.append(
-            f"`sample_valid={str(classification['sample_valid']).lower()}` · "
-            f"`reporting_mode={classification['reporting_mode']}` · "
-            f"`cache_import_status={classification['cache_import_status']}`"
-        )
-        if classification["reporting_reason"]:
-            lines.append("")
-            lines.append(f"> Not comparable: `{classification['reporting_reason']}`")
-        lines.append("")
 
     source = (lanes[next(iter(lanes))] if lanes else {}).get("source") or {}
     if source.get("repository") and source.get("sha"):
