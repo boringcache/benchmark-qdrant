@@ -40,6 +40,13 @@ runs:
         ./scripts/scope-boringcache-run.sh "$cache_scope"
         echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
         echo "source_sha=$(git -C upstream rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+    - name: Log in to the GitHub Container Registry
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
     - name: Start the provider setup timer
       id: setup_timer
       shell: bash
@@ -63,7 +70,8 @@ runs:
       with:
         context: upstream
         file: upstream/Dockerfile
-        tags: qdrant-benchmark:latest
+        tags: ghcr.io/${{ github.repository_owner }}/qdrant-benchmark:actions-cache
+        push: ${{ github.event_name != 'pull_request' }}
         build-args: |
           PROFILE=ci
           FEATURES=data-consistency-check,staging
@@ -82,8 +90,9 @@ runs:
         trust-policy: publish
         context: upstream
         dockerfile: upstream/Dockerfile
-        image: qdrant-benchmark
-        tags: latest
+        image: ghcr.io/${{ github.repository_owner }}/qdrant-benchmark
+        tags: boringcache
+        push: ${{ github.event_name != 'pull_request' }}
         build-args: |
           PROFILE=ci
           FEATURES=data-consistency-check,staging
@@ -102,8 +111,9 @@ runs:
         trust-policy: restore
         context: upstream
         dockerfile: upstream/Dockerfile
-        image: qdrant-benchmark
-        tags: latest
+        image: ghcr.io/${{ github.repository_owner }}/qdrant-benchmark
+        tags: boringcache
+        push: ${{ github.event_name != 'pull_request' }}
         build-args: |
           PROFILE=ci
           FEATURES=data-consistency-check,staging
@@ -120,7 +130,7 @@ runs:
       run: echo "build_seconds=$(( $(date +%s) - BUILD_STARTED_AT ))" >> "$GITHUB_OUTPUT"
     - name: Verify the Qdrant image
       shell: bash
-      run: docker image inspect qdrant-benchmark:latest >/dev/null
+      run: docker image inspect ghcr.io/${{ github.repository_owner }}/qdrant-benchmark:${{ inputs.strategy == 'boringcache' && 'boringcache' || 'actions-cache' }} >/dev/null
     - name: Write the benchmark phase evidence
       shell: bash
       env:
