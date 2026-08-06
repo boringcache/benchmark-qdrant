@@ -37,6 +37,7 @@ jobs:
           cache_lane: rolling
           phase: publish
           benchmark_id: ${{ format('qdrant{0}', inputs.benchmark_id_suffix) }}
+          push_image: "true"
           cli_version: ${{ inputs.cli_version }}
           buildkit_image: ${{ inputs.buildkit_image }}
   report:
