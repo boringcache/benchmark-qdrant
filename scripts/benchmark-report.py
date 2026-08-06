@@ -52,8 +52,10 @@ def parse_args() -> argparse.Namespace:
     phase.add_argument("--lane", required=True, choices=sorted(LANE_PHASES))
     phase.add_argument("--phase", required=True, choices=sorted(PHASE_LABELS))
     phase.add_argument("--mode", required=True)
+    phase.add_argument("--variant", default="")
     phase.add_argument("--build-seconds", type=int, required=True)
     phase.add_argument("--restore-or-setup-seconds", type=int, default=0)
+    phase.add_argument("--workflow-seconds", type=int, default=0)
     phase.add_argument("--cache-hit", default="")
     phase.add_argument("--cache-import-ready", default="")
     phase.add_argument("--cache-tag", default="")
@@ -64,12 +66,16 @@ def parse_args() -> argparse.Namespace:
     phase.add_argument("--output-dir", default="benchmark-results")
 
     summarize = subparsers.add_parser("summarize")
-    summarize.add_argument("--benchmark", required=True)
+    summarize.add_argument("--benchmark", default="")
     summarize.add_argument("--title", required=True)
     summarize.add_argument("--input-dir", required=True)
     summarize.add_argument("--output-dir", default="benchmark-results")
 
     return parser.parse_args()
+
+
+def variant_slug(variant: str) -> str:
+    return "".join(character if character.isalnum() else "-" for character in variant).strip("-").lower()
 
 
 def optional_bool(value: str) -> bool | None:
@@ -133,12 +139,14 @@ def write_phase(args: argparse.Namespace) -> int:
         "strategy": args.strategy,
         "lane": args.lane,
         "phase": args.phase,
+        "variant": args.variant or None,
         "mode": args.mode,
         "adapter": args.mode,
         "timing": {
             "restore_or_setup_seconds": args.restore_or_setup_seconds,
             "build_seconds": args.build_seconds,
             "total_seconds": total_seconds,
+            "workflow_seconds": args.workflow_seconds or None,
         },
         "cache": {
             "hit": cache_hit,
@@ -159,7 +167,8 @@ def write_phase(args: argparse.Namespace) -> int:
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{args.benchmark}-{args.strategy}-{args.lane}-{args.phase}.json"
+    slug = f"-{variant_slug(args.variant)}" if args.variant else ""
+    output_path = output_dir / f"{args.benchmark}-{args.strategy}{slug}-{args.lane}-{args.phase}.json"
     output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     print(output_path)
     return 0
@@ -184,6 +193,8 @@ def merge_lane(benchmark: str, strategy: str, lane: str, phases: list[dict[str, 
         timing = payload["timing"]
         total_field, build_field, setup_field = fields
         runs[total_field] = timing["total_seconds"]
+        if timing.get("workflow_seconds"):
+            runs[f"{phase_name}_workflow_seconds"] = timing["workflow_seconds"]
         if build_field:
             runs[build_field] = timing["build_seconds"]
         if setup_field:
@@ -250,34 +261,72 @@ def cache_state(payload: dict[str, Any]) -> str:
     return "not reported"
 
 
-def render_markdown(title: str, lanes: dict[tuple[str, str], dict[str, Any]], phases: list[dict[str, Any]]) -> str:
+def render_markdown(title: str, lanes: dict[tuple[str, str, str, str], dict[str, Any]], phases: list[dict[str, Any]]) -> str:
     lines = [f"## {title}", ""]
-    lane_names = sorted({lane for _, lane in lanes})
+    benchmarks = sorted({payload["benchmark"] for payload in phases})
+
+    for benchmark in benchmarks:
+        if len(benchmarks) > 1:
+            lines.append(f"### {benchmark}")
+            lines.append("")
+        lines.extend(render_benchmark(benchmark, lanes, phases, depth=4 if len(benchmarks) > 1 else 3))
+
+    source = next((payload["source"] for payload in phases if payload["source"].get("sha")), None)
+    if source and source.get("repository"):
+        lines.append(f"Source: `{source['repository']}@{source['sha'][:7]}`")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def provider_label(strategy: str, variant: str) -> str:
+    label = PROVIDER_LABELS.get(strategy, strategy)
+    return f"{label} ({variant})" if variant else label
+
+
+def render_benchmark(
+    benchmark: str,
+    all_lanes: dict[tuple[str, str, str, str], dict[str, Any]],
+    all_phases: list[dict[str, Any]],
+    depth: int,
+) -> list[str]:
+    lines: list[str] = []
+    heading = "#" * depth
+    phases = [payload for payload in all_phases if payload["benchmark"] == benchmark]
+    lanes = {
+        (strategy, variant, lane): value
+        for (item, strategy, variant, lane), value in all_lanes.items()
+        if item == benchmark
+    }
+    lane_names = sorted({lane for _, _, lane in lanes})
 
     for lane in lane_names:
-        baseline = lanes.get((BASELINE_STRATEGY, lane))
-        candidate = lanes.get((CANDIDATE_STRATEGY, lane))
+        baseline = lanes.get((BASELINE_STRATEGY, "", lane))
+        candidate = lanes.get((CANDIDATE_STRATEGY, "", lane))
         reference = candidate or baseline
         if reference is None:
             continue
 
-        lane_strategies = sorted(
-            {strategy for strategy, item in lanes if item == lane},
-            key=lambda strategy: (strategy != CANDIDATE_STRATEGY, strategy != BASELINE_STRATEGY, strategy),
+        lane_providers = sorted(
+            {(strategy, variant) for strategy, variant, item in lanes if item == lane},
+            key=lambda entry: (entry[0] != CANDIDATE_STRATEGY, entry[0] != BASELINE_STRATEGY, bool(entry[1]), entry),
         )
 
-        lines.append(f"### {lane.capitalize()} lane")
+        lines.append(f"{heading} {lane.capitalize()} lane")
         lines.append("")
-        lines.append("| Provider | Phase | Setup | Build | Total | Cache |")
-        lines.append("| --- | --- | ---: | ---: | ---: | --- |")
+        lines.append("| Provider | Phase | Cache setup | Build | Cache + build | Workflow | Cache |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: | --- |")
 
         for phase_name in LANE_PHASES[lane]:
-            for strategy in lane_strategies:
+            for strategy, variant in lane_providers:
                 payload = next(
                     (
                         item
                         for item in phases
-                        if item["strategy"] == strategy and item["lane"] == lane and item["phase"] == phase_name
+                        if item["strategy"] == strategy
+                        and (item.get("variant") or "") == variant
+                        and item["lane"] == lane
+                        and item["phase"] == phase_name
                     ),
                     None,
                 )
@@ -285,10 +334,11 @@ def render_markdown(title: str, lanes: dict[tuple[str, str], dict[str, Any]], ph
                     continue
                 timing = payload["timing"]
                 lines.append(
-                    f"| {PROVIDER_LABELS.get(strategy, strategy)} | {PHASE_LABELS[phase_name]} "
+                    f"| {provider_label(strategy, variant)} | {PHASE_LABELS[phase_name]} "
                     f"| {format_seconds(timing['restore_or_setup_seconds'])} "
                     f"| {format_seconds(timing['build_seconds'])} "
                     f"| {format_seconds(timing['total_seconds'])} "
+                    f"| {format_seconds(timing.get('workflow_seconds'))} "
                     f"| {cache_state(payload)} |"
                 )
 
@@ -314,12 +364,7 @@ def render_markdown(title: str, lanes: dict[tuple[str, str], dict[str, Any]], ph
                 )
             lines.append("")
 
-    source = (lanes[next(iter(lanes))] if lanes else {}).get("source") or {}
-    if source.get("repository") and source.get("sha"):
-        lines.append(f"Source: `{source['repository']}@{source['sha'][:7]}`")
-        lines.append("")
-
-    return "\n".join(lines)
+    return lines
 
 
 def summarize(args: argparse.Namespace) -> int:
@@ -330,15 +375,18 @@ def summarize(args: argparse.Namespace) -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
     for payload in phases:
-        grouped.setdefault((payload["strategy"], payload["lane"]), []).append(payload)
+        key = (payload["benchmark"], payload["strategy"], payload.get("variant") or "", payload["lane"])
+        grouped.setdefault(key, []).append(payload)
 
     lanes = {}
-    for (strategy, lane), lane_phases in grouped.items():
-        merged = merge_lane(args.benchmark, strategy, lane, lane_phases)
-        lanes[(strategy, lane)] = merged
-        output_path = output_dir / f"{args.benchmark}-{strategy}-{lane}.json"
+    for (benchmark, strategy, variant, lane), lane_phases in grouped.items():
+        merged = merge_lane(benchmark, strategy, lane, lane_phases)
+        merged["variant"] = variant or None
+        lanes[(benchmark, strategy, variant, lane)] = merged
+        slug = f"-{variant_slug(variant)}" if variant else ""
+        output_path = output_dir / f"{benchmark}-{strategy}{slug}-{lane}.json"
         output_path.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n")
         print(output_path)
 
