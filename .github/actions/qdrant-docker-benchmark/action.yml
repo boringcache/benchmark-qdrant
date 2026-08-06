@@ -35,9 +35,24 @@ runs:
         if [[ "$CACHE_LANE" == "rolling" ]]; then cache_scope="${BENCHMARK_ID}-rolling-${ref_slug}"; else cache_scope="${BENCHMARK_ID}-run-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"; fi
         ./scripts/scope-boringcache-run.sh "$cache_scope"
         echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
+        echo "source_sha=$(git -C upstream rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+    - name: Start the provider setup timer
+      id: setup_timer
+      shell: bash
+      run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
     - name: Set up Buildx for the GitHub Actions comparison
       if: inputs.strategy == 'actions-cache'
       uses: docker/setup-buildx-action@v4
+    - name: Start the build timer
+      id: build_timer
+      shell: bash
+      env:
+        SETUP_STARTED_AT: ${{ steps.setup_timer.outputs.started_at }}
+      run: |
+        set -euo pipefail
+        now="$(date +%s)"
+        echo "setup_seconds=$(( now - SETUP_STARTED_AT ))" >> "$GITHUB_OUTPUT"
+        echo "started_at=${now}" >> "$GITHUB_OUTPUT"
     - name: Build with the GitHub Actions cache
       if: inputs.strategy == 'actions-cache'
       uses: docker/build-push-action@v6
@@ -53,6 +68,7 @@ runs:
         cache-from: type=gha,scope=${{ steps.scope.outputs.cache_scope }}
         cache-to: type=gha,scope=${{ steps.scope.outputs.cache_scope }},mode=max
     - name: Publish with BoringCache
+      id: publish
       if: inputs.strategy == 'boringcache' && inputs.phase == 'publish'
       uses: boringcache/one@b372edd91cda127cb03c64967df35c3836d47f2a # v1 / 1.17.0
       with:
@@ -72,6 +88,7 @@ runs:
         metadata-hints: benchmark=${{ inputs.benchmark_id }},phase=${{ inputs.cache_lane == 'rolling' && 'rolling' || 'fresh-cold' }}
         managed-buildkit-image: ${{ inputs.buildkit_image }}
     - name: Restore with BoringCache
+      id: restore
       if: inputs.strategy == 'boringcache' && inputs.phase == 'warm'
       uses: boringcache/one@b372edd91cda127cb03c64967df35c3836d47f2a # v1 / 1.17.0
       with:
@@ -91,6 +108,50 @@ runs:
         fail-on-cache-error: true
         metadata-hints: benchmark=${{ inputs.benchmark_id }},phase=fresh-warm
         managed-buildkit-image: ${{ inputs.buildkit_image }}
+    - name: Capture the build timing
+      id: build_timing
+      shell: bash
+      env:
+        BUILD_STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
+      run: echo "build_seconds=$(( $(date +%s) - BUILD_STARTED_AT ))" >> "$GITHUB_OUTPUT"
     - name: Verify the Qdrant image
       shell: bash
       run: docker image inspect qdrant-benchmark:latest >/dev/null
+    - name: Write the benchmark phase evidence
+      shell: bash
+      env:
+        BENCHMARK_ID: ${{ inputs.benchmark_id }}
+        STRATEGY: ${{ inputs.strategy }}
+        CACHE_LANE: ${{ inputs.cache_lane }}
+        REPORT_PHASE: ${{ inputs.cache_lane == 'rolling' && 'commit' || inputs.phase == 'warm' && 'warm' || 'cold' }}
+        SETUP_SECONDS: ${{ steps.build_timer.outputs.setup_seconds }}
+        BUILD_SECONDS: ${{ steps.build_timing.outputs.build_seconds }}
+        CACHE_HIT: ${{ steps.publish.outputs.cache-hit || steps.restore.outputs.cache-hit }}
+        CACHE_IMPORT_READY: ${{ steps.publish.outputs.docker-cache-import-ready || steps.restore.outputs.docker-cache-import-ready }}
+        CACHE_TAG: ${{ steps.publish.outputs.cache-tag || steps.restore.outputs.cache-tag }}
+        CACHE_WORKSPACE: ${{ steps.publish.outputs.workspace || steps.restore.outputs.workspace }}
+        EVIDENCE_PATH: ${{ steps.publish.outputs.evidence-path || steps.restore.outputs.evidence-path }}
+        SOURCE_SHA: ${{ steps.scope.outputs.source_sha }}
+      run: |
+        set -euo pipefail
+        python3 ./scripts/benchmark-report.py phase \
+          --benchmark "$BENCHMARK_ID" \
+          --strategy "$STRATEGY" \
+          --lane "$CACHE_LANE" \
+          --phase "$REPORT_PHASE" \
+          --mode docker \
+          --restore-or-setup-seconds "$SETUP_SECONDS" \
+          --build-seconds "$BUILD_SECONDS" \
+          --cache-hit "$CACHE_HIT" \
+          --cache-import-ready "$CACHE_IMPORT_READY" \
+          --cache-tag "$CACHE_TAG" \
+          --workspace "$CACHE_WORKSPACE" \
+          --source-repository qdrant/qdrant \
+          --source-sha "$SOURCE_SHA" \
+          --evidence "$EVIDENCE_PATH"
+    - name: Retain the benchmark phase evidence
+      uses: actions/upload-artifact@v6
+      with:
+        name: phase-${{ inputs.benchmark_id }}-${{ inputs.strategy }}-${{ inputs.cache_lane }}-${{ inputs.cache_lane == 'rolling' && 'commit' || inputs.phase == 'warm' && 'warm' || 'cold' }}
+        path: benchmark-results/
+        if-no-files-found: error

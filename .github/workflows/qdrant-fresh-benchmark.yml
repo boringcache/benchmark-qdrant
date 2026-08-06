@@ -17,6 +17,7 @@ env:
   BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
   BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
   BORINGCACHE_NO_GIT: "true"
+  BENCHMARK_ID: ${{ format('qdrant{0}', inputs.benchmark_id_suffix) }}
 jobs:
   cold:
     name: ${{ matrix.provider }} Qdrant cold
@@ -48,3 +49,34 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/qdrant-docker-benchmark
         with: {strategy: "${{ matrix.strategy }}", cache_lane: fresh, phase: warm, benchmark_id: "${{ format('qdrant{0}', inputs.benchmark_id_suffix) }}", cli_version: "${{ inputs.cli_version }}", buildkit_image: "${{ inputs.buildkit_image }}"}
+  report:
+    name: Qdrant fresh report
+    needs: warm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download the benchmark phase evidence
+        uses: actions/download-artifact@v6
+        with:
+          pattern: phase-${{ env.BENCHMARK_ID }}-*
+          path: phase-evidence
+      - name: Publish the Qdrant fresh benchmark report
+        run: |
+          python3 ./scripts/benchmark-report.py summarize \
+            --benchmark "$BENCHMARK_ID" \
+            --title "Qdrant Docker fresh benchmark" \
+            --input-dir phase-evidence \
+            --output-dir benchmark-results
+      - name: Retain the BoringCache fresh result
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-${{ env.BENCHMARK_ID }}-boringcache-fresh
+          path: benchmark-results/${{ env.BENCHMARK_ID }}-boringcache-fresh.json
+          if-no-files-found: error
+      - name: Retain the GitHub Actions fresh result
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-${{ env.BENCHMARK_ID }}-actions-cache-fresh
+          path: benchmark-results/${{ env.BENCHMARK_ID }}-actions-cache-fresh.json
+          if-no-files-found: error

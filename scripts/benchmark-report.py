@@ -1,0 +1,444 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+SCHEMA_VERSION = 1
+
+PROVIDER_LABELS = {
+    "actions-cache": "GitHub Actions",
+    "boringcache": "BoringCache",
+}
+
+PHASE_LABELS = {
+    "cold": "Cold build",
+    "warm": "Warm build",
+    "commit": "Commit build",
+}
+
+LANE_PHASES = {
+    "fresh": ("cold", "warm"),
+    "rolling": ("commit",),
+}
+
+PHASE_RUN_FIELDS = {
+    "cold": ("cold_seconds", "cold_build_seconds", "cold_restore_or_setup_seconds"),
+    "warm": ("warm1_seconds", "warm1_build_seconds", "warm1_restore_or_setup_seconds"),
+    "commit": ("rolling_first_build_seconds", None, None),
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    phase = subparsers.add_parser("phase")
+    phase.add_argument("--benchmark", required=True)
+    phase.add_argument("--strategy", required=True, choices=sorted(PROVIDER_LABELS))
+    phase.add_argument("--lane", required=True, choices=sorted(LANE_PHASES))
+    phase.add_argument("--phase", required=True, choices=sorted(PHASE_LABELS))
+    phase.add_argument("--mode", required=True)
+    phase.add_argument("--build-seconds", type=int, required=True)
+    phase.add_argument("--restore-or-setup-seconds", type=int, default=0)
+    phase.add_argument("--cache-hit", default="")
+    phase.add_argument("--cache-import-ready", default="")
+    phase.add_argument("--cache-tag", default="")
+    phase.add_argument("--workspace", default="")
+    phase.add_argument("--source-repository", default="")
+    phase.add_argument("--source-sha", default="")
+    phase.add_argument("--evidence")
+    phase.add_argument("--output-dir", default="benchmark-results")
+
+    summarize = subparsers.add_parser("summarize")
+    summarize.add_argument("--benchmark", required=True)
+    summarize.add_argument("--title", required=True)
+    summarize.add_argument("--input-dir", required=True)
+    summarize.add_argument("--output-dir", default="benchmark-results")
+
+    return parser.parse_args()
+
+
+def optional_bool(value: str) -> bool | None:
+    normalized = value.strip().lower()
+    if normalized in ("true", "1", "yes"):
+        return True
+    if normalized in ("false", "0", "no"):
+        return False
+    return None
+
+
+def load_evidence(path: str | None) -> dict[str, Any] | None:
+    if not path:
+        return None
+    evidence_path = Path(path)
+    if not evidence_path.is_file():
+        return None
+    return json.loads(evidence_path.read_text())
+
+
+def classify(phase: str, cache_hit: bool | None, import_ready: bool | None) -> dict[str, Any]:
+    if phase == "cold":
+        return {
+            "sample_valid": True,
+            "reporting_mode": "comparative",
+            "reporting_reason": None,
+            "validity_reason": "cold build against an empty cache cohort",
+            "cache_import_status": "cold",
+            "rolling_reseed": None,
+            "steady_state_candidate": None,
+        }
+
+    if phase == "warm":
+        if cache_hit is None:
+            return {
+                "sample_valid": True,
+                "reporting_mode": "comparative",
+                "reporting_reason": None,
+                "validity_reason": "provider does not expose warm restore evidence",
+                "cache_import_status": "unknown",
+                "rolling_reseed": None,
+                "steady_state_candidate": None,
+            }
+        if cache_hit:
+            return {
+                "sample_valid": True,
+                "reporting_mode": "comparative",
+                "reporting_reason": None,
+                "validity_reason": "warm build restored the cold cache on a fresh runner",
+                "cache_import_status": "hit",
+                "rolling_reseed": None,
+                "steady_state_candidate": None,
+            }
+        return {
+            "sample_valid": False,
+            "reporting_mode": "invalid",
+            "reporting_reason": "fresh_warm_cache_import_not_ok",
+            "validity_reason": "fresh_warm_cache_import_not_ok",
+            "cache_import_status": "miss",
+            "rolling_reseed": None,
+            "steady_state_candidate": None,
+        }
+
+    if import_ready is False:
+        return {
+            "sample_valid": True,
+            "reporting_mode": "investigation_only",
+            "reporting_reason": "rolling_cache_import_not_ok",
+            "validity_reason": None,
+            "cache_import_status": "import_not_ready",
+            "rolling_reseed": True,
+            "steady_state_candidate": False,
+        }
+
+    if cache_hit is None:
+        return {
+            "sample_valid": True,
+            "reporting_mode": "comparative",
+            "reporting_reason": None,
+            "validity_reason": "provider does not expose cache import evidence",
+            "cache_import_status": "unknown",
+            "rolling_reseed": None,
+            "steady_state_candidate": None,
+        }
+
+    if cache_hit:
+        return {
+            "sample_valid": True,
+            "reporting_mode": "comparative",
+            "reporting_reason": None,
+            "validity_reason": "commit build imported the prior rolling cache",
+            "cache_import_status": "hit",
+            "rolling_reseed": False,
+            "steady_state_candidate": True,
+        }
+
+    return {
+        "sample_valid": True,
+        "reporting_mode": "investigation_only",
+        "reporting_reason": "rolling_cache_bootstrap",
+        "validity_reason": None,
+        "cache_import_status": "miss",
+        "rolling_reseed": True,
+        "steady_state_candidate": False,
+    }
+
+
+def github_identity() -> dict[str, Any]:
+    return {
+        "repository": os.environ.get("GITHUB_REPOSITORY"),
+        "run_id": os.environ.get("GITHUB_RUN_ID"),
+        "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+        "job": os.environ.get("GITHUB_JOB"),
+        "workflow": os.environ.get("GITHUB_WORKFLOW"),
+        "ref_name": os.environ.get("GITHUB_REF_NAME"),
+    }
+
+
+def run_uid() -> str | None:
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if not run_id:
+        return None
+    return f"gh-{run_id}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
+
+
+def evidence_action_versions(evidence: dict[str, Any] | None) -> dict[str, Any]:
+    if not evidence:
+        return {}
+    phases = evidence.get("phases") or {}
+    restore = phases.get("restore") or {}
+    return {
+        "resolved_mode": restore.get("mode"),
+        "resolved_tags": restore.get("resolved_tags"),
+        "trust_state": (restore.get("trust_state") or {}).get("policy"),
+        "diagnostics_level": restore.get("diagnostics_level"),
+    }
+
+
+def write_phase(args: argparse.Namespace) -> int:
+    cache_hit = optional_bool(args.cache_hit)
+    import_ready = optional_bool(args.cache_import_ready)
+    evidence = load_evidence(args.evidence)
+    total_seconds = args.restore_or_setup_seconds + args.build_seconds
+
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "benchmark": args.benchmark,
+        "strategy": args.strategy,
+        "lane": args.lane,
+        "phase": args.phase,
+        "mode": args.mode,
+        "adapter": args.mode,
+        "timing": {
+            "restore_or_setup_seconds": args.restore_or_setup_seconds,
+            "build_seconds": args.build_seconds,
+            "total_seconds": total_seconds,
+        },
+        "cache": {
+            "hit": cache_hit,
+            "import_ready": import_ready,
+            "tag": args.cache_tag or None,
+            "workspace": args.workspace or None,
+            "storage_bytes": None,
+            "storage_source": None,
+        },
+        "source": {
+            "repository": args.source_repository or None,
+            "sha": args.source_sha or None,
+        },
+        "action": evidence_action_versions(evidence),
+        "classification": classify(args.phase, cache_hit, import_ready),
+        "github": github_identity(),
+        "run_uid": run_uid(),
+    }
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{args.benchmark}-{args.strategy}-{args.lane}-{args.phase}.json"
+    output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    print(output_path)
+    return 0
+
+
+def load_phases(input_dir: Path) -> list[dict[str, Any]]:
+    payloads = []
+    for path in sorted(input_dir.rglob("*.json")):
+        payload = json.loads(path.read_text())
+        if payload.get("schema_version") == SCHEMA_VERSION and payload.get("phase"):
+            payloads.append(payload)
+    return payloads
+
+
+def merge_lane(benchmark: str, strategy: str, lane: str, phases: list[dict[str, Any]]) -> dict[str, Any]:
+    by_phase = {payload["phase"]: payload for payload in phases}
+    runs: dict[str, Any] = {}
+    for phase_name, fields in PHASE_RUN_FIELDS.items():
+        payload = by_phase.get(phase_name)
+        if payload is None:
+            continue
+        timing = payload["timing"]
+        total_field, build_field, setup_field = fields
+        runs[total_field] = timing["total_seconds"]
+        if build_field:
+            runs[build_field] = timing["build_seconds"]
+        if setup_field:
+            runs[setup_field] = timing["restore_or_setup_seconds"]
+
+    warm = by_phase.get("warm")
+    reference = by_phase.get("commit") or by_phase.get("warm") or by_phase.get("cold")
+    if reference is None:
+        raise SystemExit(f"no usable phase evidence for {benchmark} {strategy} {lane}")
+
+    classifications = [payload["classification"] for payload in phases]
+    invalid = [item for item in classifications if item["sample_valid"] is False]
+    investigation = [item for item in classifications if item["reporting_mode"] == "investigation_only"]
+    classification = invalid[0] if invalid else (investigation[0] if investigation else reference["classification"])
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "benchmark": benchmark,
+        "strategy": strategy,
+        "lane": lane,
+        "mode": reference["mode"],
+        "adapter": reference["adapter"],
+        "runs": runs,
+        "speed": {"warm_average_seconds": warm["timing"]["total_seconds"] if warm else None},
+        "cache": reference["cache"],
+        "source": reference["source"],
+        "classification": classification,
+        "workspace": reference["cache"]["workspace"],
+        "cache_tag": reference["cache"]["tag"],
+        "run_uid": reference["run_uid"],
+        "github": reference["github"],
+    }
+
+
+def format_seconds(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    seconds = int(value)
+    if seconds < 60:
+        return f"{seconds}s"
+    return f"{seconds // 60}m{seconds % 60:02d}s"
+
+
+def format_delta(baseline: Any, candidate: Any) -> str:
+    if baseline is None or candidate is None or baseline == 0:
+        return "n/a"
+    change = (baseline - candidate) / baseline * 100
+    if change >= 0:
+        return f"{change:.0f}% faster"
+    return f"{abs(change):.0f}% slower"
+
+
+def cache_state(payload: dict[str, Any]) -> str:
+    cache = payload["cache"]
+    if cache["import_ready"] is False:
+        return "import not ready"
+    if cache["hit"] is True:
+        return "hit"
+    if cache["hit"] is False:
+        return "miss"
+    return "not reported"
+
+
+def render_markdown(title: str, lanes: dict[tuple[str, str], dict[str, Any]], phases: list[dict[str, Any]]) -> str:
+    lines = [f"## {title}", ""]
+    lane_names = sorted({lane for _, lane in lanes})
+
+    for lane in lane_names:
+        baseline = lanes.get(("actions-cache", lane))
+        candidate = lanes.get(("boringcache", lane))
+        reference = candidate or baseline
+        if reference is None:
+            continue
+
+        lines.append(f"### {lane.capitalize()} lane")
+        lines.append("")
+        lines.append("| Provider | Phase | Setup | Build | Total | Cache |")
+        lines.append("| --- | --- | ---: | ---: | ---: | --- |")
+
+        for phase_name in LANE_PHASES[lane]:
+            for strategy in ("boringcache", "actions-cache"):
+                payload = next(
+                    (
+                        item
+                        for item in phases
+                        if item["strategy"] == strategy and item["lane"] == lane and item["phase"] == phase_name
+                    ),
+                    None,
+                )
+                if payload is None:
+                    continue
+                timing = payload["timing"]
+                lines.append(
+                    f"| {PROVIDER_LABELS[strategy]} | {PHASE_LABELS[phase_name]} "
+                    f"| {format_seconds(timing['restore_or_setup_seconds'])} "
+                    f"| {format_seconds(timing['build_seconds'])} "
+                    f"| {format_seconds(timing['total_seconds'])} "
+                    f"| {cache_state(payload)} |"
+                )
+
+        lines.append("")
+
+        comparative = all(
+            payload["classification"]["reporting_mode"] == "comparative"
+            for payload in (baseline, candidate)
+            if payload is not None
+        )
+
+        if baseline and candidate and comparative:
+            for phase_name in LANE_PHASES[lane]:
+                total_field = PHASE_RUN_FIELDS[phase_name][0]
+                before = baseline["runs"].get(total_field)
+                after = candidate["runs"].get(total_field)
+                if before is None or after is None:
+                    continue
+                lines.append(
+                    f"- {PHASE_LABELS[phase_name]}: BoringCache {format_seconds(after)} "
+                    f"vs GitHub Actions {format_seconds(before)} — **{format_delta(before, after)}**"
+                )
+            lines.append("")
+
+        classification = reference["classification"]
+        lines.append(
+            f"`sample_valid={str(classification['sample_valid']).lower()}` · "
+            f"`reporting_mode={classification['reporting_mode']}` · "
+            f"`cache_import_status={classification['cache_import_status']}`"
+        )
+        if classification["reporting_reason"]:
+            lines.append("")
+            lines.append(f"> Not comparable: `{classification['reporting_reason']}`")
+        lines.append("")
+
+    source = (lanes[next(iter(lanes))] if lanes else {}).get("source") or {}
+    if source.get("repository") and source.get("sha"):
+        lines.append(f"Source: `{source['repository']}@{source['sha'][:7]}`")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def summarize(args: argparse.Namespace) -> int:
+    phases = load_phases(Path(args.input_dir))
+    if not phases:
+        raise SystemExit(f"no benchmark phase evidence found under {args.input_dir}")
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for payload in phases:
+        grouped.setdefault((payload["strategy"], payload["lane"]), []).append(payload)
+
+    lanes = {}
+    for (strategy, lane), lane_phases in grouped.items():
+        merged = merge_lane(args.benchmark, strategy, lane, lane_phases)
+        lanes[(strategy, lane)] = merged
+        output_path = output_dir / f"{args.benchmark}-{strategy}-{lane}.json"
+        output_path.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n")
+        print(output_path)
+
+    markdown = render_markdown(args.title, lanes, phases)
+    (output_dir / "comparison.md").write_text(markdown)
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as handle:
+            handle.write(markdown)
+
+    return 0
+
+
+def main() -> int:
+    args = parse_args()
+    if args.command == "phase":
+        return write_phase(args)
+    return summarize(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
