@@ -55,7 +55,6 @@ jobs:
       - name: Publish the Qdrant benchmark report
         run: |
           python3 ./scripts/benchmark-report.py summarize \
-            --benchmark "$BENCHMARK_ID" \
             --title "Qdrant Docker rolling benchmark" \
             --input-dir phase-evidence \
             --output-dir benchmark-results
