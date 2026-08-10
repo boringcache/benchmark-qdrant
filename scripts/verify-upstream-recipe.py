@@ -23,7 +23,7 @@ def main() -> int:
         require(action.count("PROFILE=ci") == 3, "provider profile drifted")
         require(action.count("FEATURES=data-consistency-check,staging") == 3, "provider features drifted")
         require(action.count("push: false") == 3 and action.count("load: true") == 3, "integration output transport drifted")
-        require(action.count("e2e-tests") == 3, "integration image tag drifted")
+        require(action.count("e2e-tests") == 4, "integration image tag drifted")
     except (KeyError, OSError, RuntimeError, tomllib.TOMLDecodeError) as error:
         print(f"Qdrant recipe mismatch: {error}", file=sys.stderr)
         return 1

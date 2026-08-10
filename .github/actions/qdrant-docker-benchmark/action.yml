@@ -130,7 +130,7 @@ runs:
       run: echo "build_seconds=$(( $(date +%s) - BUILD_STARTED_AT ))" >> "$GITHUB_OUTPUT"
     - name: Verify the Qdrant image
       shell: bash
-      run: docker image inspect ghcr.io/${{ github.repository_owner }}/qdrant-benchmark:${{ inputs.strategy == 'boringcache' && 'boringcache' || 'actions-cache' }} >/dev/null
+      run: docker image inspect qdrant/qdrant:e2e-tests >/dev/null
     - name: Write the benchmark phase evidence
       shell: bash
       env:
