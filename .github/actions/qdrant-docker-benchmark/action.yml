@@ -20,6 +20,9 @@ runs:
       run: |
         git submodule sync --recursive
         git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 4 upstream
+    - name: Verify the upstream benchmark recipe
+      shell: bash
+      run: python3 ./scripts/verify-upstream-recipe.py
     - name: Prepare clean Qdrant source
       shell: bash
       env:
@@ -41,13 +44,6 @@ runs:
         ./scripts/scope-boringcache-run.sh "$cache_scope"
         echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
         echo "source_sha=$(git -C upstream rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-    - name: Log in to the GitHub Container Registry
-      if: inputs.push_image == 'true' && github.ref == 'refs/heads/main'
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ github.token }}
     - name: Start the provider setup timer
       id: setup_timer
       shell: bash
@@ -74,8 +70,8 @@ runs:
       with:
         context: upstream
         file: upstream/Dockerfile
-        tags: ghcr.io/${{ github.repository_owner }}/qdrant-benchmark:actions-cache
-        push: ${{ inputs.push_image == 'true' && github.ref == 'refs/heads/main' }}
+        tags: qdrant/qdrant:e2e-tests
+        push: false
         build-args: |
           PROFILE=ci
           FEATURES=data-consistency-check,staging
@@ -94,9 +90,9 @@ runs:
         trust-policy: publish
         context: upstream
         dockerfile: upstream/Dockerfile
-        image: ghcr.io/${{ github.repository_owner }}/qdrant-benchmark
-        tags: boringcache
-        push: ${{ inputs.push_image == 'true' && github.ref == 'refs/heads/main' }}
+        image: qdrant/qdrant
+        tags: e2e-tests
+        push: false
         build-args: |
           PROFILE=ci
           FEATURES=data-consistency-check,staging
@@ -115,9 +111,9 @@ runs:
         trust-policy: restore
         context: upstream
         dockerfile: upstream/Dockerfile
-        image: ghcr.io/${{ github.repository_owner }}/qdrant-benchmark
-        tags: boringcache
-        push: ${{ inputs.push_image == 'true' && github.ref == 'refs/heads/main' }}
+        image: qdrant/qdrant
+        tags: e2e-tests
+        push: false
         build-args: |
           PROFILE=ci
           FEATURES=data-consistency-check,staging
