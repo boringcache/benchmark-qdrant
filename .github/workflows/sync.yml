@@ -6,6 +6,7 @@ on:
     - cron: "23,53 * * * *"
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -17,26 +18,18 @@ jobs:
     name: Sync With Upstream
     runs-on: ubuntu-24.04
     steps:
-      - name: Accept bot repository invitation if needed
-        env:
-          GH_TOKEN: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          invitation_id="$(gh api user/repository_invitations --jq ".[] | select(.repository.full_name == \"${GITHUB_REPOSITORY}\") | .id")"
-          if [[ -n "$invitation_id" ]]; then
-            gh api --method PATCH "user/repository_invitations/${invitation_id}"
-          fi
-
       - name: Checkout benchmark repo
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           submodules: false
-          token: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN }}
+          token: ${{ github.token }}
 
       - name: Sync upstream submodule
+        id: sync
         run: |
           set -euo pipefail
+          echo "updated=false" >> "$GITHUB_OUTPUT"
           git config --global user.name "boringcache-bot"
           git config --global user.email "boringcache-bot@users.noreply.github.com"
 
@@ -68,3 +61,10 @@ jobs:
           git add upstream
           git commit -m "Update upstream to ${upstream_repo}@${commit_sha}"
           git push origin HEAD:main
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch rolling benchmark
+        if: steps.sync.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run qdrant-benchmark.yml --repo "$GITHUB_REPOSITORY" --ref main
