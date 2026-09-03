@@ -1,0 +1,5 @@
+[submodule "upstream"]
+	path = upstream
+	url = https://github.com/qdrant/qdrant.git
+	branch = dev
+	shallow = true

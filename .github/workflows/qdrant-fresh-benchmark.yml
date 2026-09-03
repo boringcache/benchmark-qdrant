@@ -1,0 +1,81 @@
+name: "Qdrant Docker Fresh"
+run-name: >-
+  ${{ format('Benchmark {0} | {1}', github.event_name == 'pull_request' && 'Validation' || inputs.cli_version != '' && 'Canary' || 'Fresh', github.event_name == 'schedule' && 'Weekly' || github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || format('Manual dispatch ({0})', github.ref_name)) }}
+on:
+  workflow_dispatch:
+    inputs:
+      buildkit_image: {description: "Optional managed BoringCache BuildKit image.", required: false, type: string, default: ""}
+      cli_version: {description: "Optional exact BoringCache CLI release tag.", required: false, type: string, default: ""}
+      benchmark_id_suffix: {description: "Optional suffix for isolated comparison runs.", required: false, type: string, default: ""}
+      runner_label: {description: "Optional runner label for a manual main-branch experiment.", required: false, type: string, default: ""}
+  schedule: [{cron: "0 3 * * 1"}]
+  pull_request:
+    paths: [".boringcache.toml", ".gitmodules", ".github/actions/qdrant-docker-benchmark/**", ".github/workflows/qdrant-benchmark.yml", ".github/workflows/qdrant-fresh-benchmark.yml", "scripts/**", "upstream"]
+concurrency: {group: "${{ github.workflow }}-${{ github.ref_name }}", cancel-in-progress: false}
+permissions: {contents: read, actions: write, packages: read}
+env:
+  BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+  BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+  BORINGCACHE_NO_GIT: "true"
+  BENCHMARK_ID: ${{ format('qdrant{0}', inputs.benchmark_id_suffix) }}
+jobs:
+  cold:
+    name: ${{ matrix.provider }} Qdrant cold
+    if: inputs.runner_label == '' || github.ref_name == 'main'
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-latest' }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {provider: GitHub Actions, strategy: actions-cache}
+          - {provider: BoringCache, strategy: boringcache}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/qdrant-docker-benchmark
+        with: {strategy: "${{ matrix.strategy }}", cache_lane: fresh, phase: publish, benchmark_id: "${{ format('qdrant{0}', inputs.benchmark_id_suffix) }}", cli_version: "${{ inputs.cli_version }}", buildkit_image: "${{ inputs.buildkit_image }}"}
+  warm:
+    name: ${{ matrix.provider }} Qdrant warm
+    needs: cold
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-latest' }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {provider: GitHub Actions, strategy: actions-cache}
+          - {provider: BoringCache, strategy: boringcache}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/qdrant-docker-benchmark
+        with: {strategy: "${{ matrix.strategy }}", cache_lane: fresh, phase: warm, benchmark_id: "${{ format('qdrant{0}', inputs.benchmark_id_suffix) }}", cli_version: "${{ inputs.cli_version }}", buildkit_image: "${{ inputs.buildkit_image }}"}
+  report:
+    name: Qdrant fresh report
+    needs: warm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download the benchmark phase evidence
+        uses: actions/download-artifact@v6
+        with:
+          pattern: phase-${{ env.BENCHMARK_ID }}-*
+          path: phase-evidence
+      - name: Publish the Qdrant fresh benchmark report
+        run: |
+          python3 ./scripts/benchmark-report.py summarize \
+            --title "Qdrant Docker fresh benchmark" \
+            --input-dir phase-evidence \
+            --output-dir benchmark-results
+      - name: Retain the BoringCache fresh result
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-${{ env.BENCHMARK_ID }}-boringcache-fresh
+          path: benchmark-results/${{ env.BENCHMARK_ID }}-boringcache-fresh.json
+          if-no-files-found: error
+      - name: Retain the GitHub Actions fresh result
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-${{ env.BENCHMARK_ID }}-actions-cache-fresh
+          path: benchmark-results/${{ env.BENCHMARK_ID }}-actions-cache-fresh.json
+          if-no-files-found: error
