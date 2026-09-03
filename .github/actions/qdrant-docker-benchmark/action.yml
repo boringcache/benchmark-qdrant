@@ -83,45 +83,25 @@ runs:
       id: publish
       if: inputs.strategy == 'boringcache' && inputs.phase == 'publish'
       uses: boringcache/one@20202f4c4b789cdee581ae3f117dfafb8293b19c # v1 / 1.20.0
+      env:
+        BORINGCACHE_MANAGED_BUILDKIT_IMAGE: ${{ inputs.buildkit_image }}
       with:
         cli-version: ${{ inputs.cli_version }}
-        setup: none
         mode: docker
         trust-policy: publish
-        context: upstream
-        dockerfile: upstream/Dockerfile
-        image: qdrant/qdrant
-        tags: e2e-tests
-        push: false
-        build-args: |
-          PROFILE=ci
-          FEATURES=data-consistency-check,staging
-        load: true
         fail-on-cache-error: true
-        metadata-hints: benchmark=${{ inputs.benchmark_id }},phase=${{ inputs.cache_lane == 'rolling' && 'rolling' || 'fresh-cold' }}
-        managed-buildkit-image: ${{ inputs.buildkit_image }}
     - name: Restore with BoringCache
       id: restore
       if: inputs.strategy == 'boringcache' && inputs.phase == 'warm'
       uses: boringcache/one@20202f4c4b789cdee581ae3f117dfafb8293b19c # v1 / 1.20.0
+      env:
+        BORINGCACHE_MANAGED_BUILDKIT_IMAGE: ${{ inputs.buildkit_image }}
       with:
         cli-version: ${{ inputs.cli_version }}
-        setup: none
         mode: docker
         trust-policy: restore
-        context: upstream
-        dockerfile: upstream/Dockerfile
-        image: qdrant/qdrant
-        tags: e2e-tests
-        push: false
-        build-args: |
-          PROFILE=ci
-          FEATURES=data-consistency-check,staging
-        load: true
         fail-on-cache-miss: true
         fail-on-cache-error: true
-        metadata-hints: benchmark=${{ inputs.benchmark_id }},phase=fresh-warm
-        managed-buildkit-image: ${{ inputs.buildkit_image }}
     - name: Capture the build timing
       id: build_timing
       shell: bash
@@ -142,10 +122,6 @@ runs:
         SETUP_SECONDS: ${{ steps.build_timer.outputs.setup_seconds }}
         BUILD_SECONDS: ${{ steps.build_timing.outputs.build_seconds }}
         CACHE_HIT: ${{ steps.publish.outputs.cache-hit || steps.restore.outputs.cache-hit }}
-        CACHE_IMPORT_READY: ${{ steps.publish.outputs.docker-cache-import-ready || steps.restore.outputs.docker-cache-import-ready }}
-        CACHE_IMPORT_REFS: ${{ steps.publish.outputs.docker-cache-from-refs || steps.restore.outputs.docker-cache-from-refs }}
-        CACHE_TAG: ${{ steps.publish.outputs.cache-tag || steps.restore.outputs.cache-tag }}
-        CACHE_WORKSPACE: ${{ steps.publish.outputs.workspace || steps.restore.outputs.workspace }}
         EVIDENCE_PATH: ${{ steps.publish.outputs.evidence-path || steps.restore.outputs.evidence-path }}
         SOURCE_SHA: ${{ steps.scope.outputs.source_sha }}
       run: |
@@ -160,10 +136,6 @@ runs:
           --workflow-seconds "$(( $(date +%s) - WORKFLOW_STARTED_AT ))" \
           --build-seconds "$BUILD_SECONDS" \
           --cache-hit "$CACHE_HIT" \
-          --cache-import-ready "$CACHE_IMPORT_READY" \
-          --cache-import-refs "$CACHE_IMPORT_REFS" \
-          --cache-tag "$CACHE_TAG" \
-          --workspace "$CACHE_WORKSPACE" \
           --source-repository qdrant/qdrant \
           --source-sha "$SOURCE_SHA" \
           --evidence "$EVIDENCE_PATH"
