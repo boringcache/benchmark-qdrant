@@ -20,10 +20,11 @@ def main() -> int:
         for fragment in ("PROFILE=ci", "FEATURES=data-consistency-check,staging", "load: true", "tags: qdrant/qdrant:e2e-tests"):
             require(fragment in upstream, f"upstream integration build changed: {fragment}")
         action = (ROOT / ".github/actions/qdrant-docker-benchmark/action.yml").read_text()
-        require(action.count("PROFILE=ci") == 3, "provider profile drifted")
-        require(action.count("FEATURES=data-consistency-check,staging") == 3, "provider features drifted")
-        require(action.count("push: false") == 3 and action.count("load: true") == 3, "integration output transport drifted")
-        require(action.count("e2e-tests") == 4, "integration image tag drifted")
+        require(action.count("PROFILE=ci") == 1, "Actions/cache profile drifted")
+        require(action.count("FEATURES=data-consistency-check,staging") == 1, "Actions/cache features drifted")
+        require(action.count("push: false") == 1 and action.count("load: true") == 1, "Actions/cache output transport drifted")
+        require(action.count("e2e-tests") == 2, "integration image tag drifted")
+        require(action.count("uses: boringcache/one") == 2, "BoringCache phases drifted")
     except (KeyError, OSError, RuntimeError, tomllib.TOMLDecodeError) as error:
         print(f"Qdrant recipe mismatch: {error}", file=sys.stderr)
         return 1
