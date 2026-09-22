@@ -123,6 +123,9 @@ runs:
         BUILD_SECONDS: ${{ steps.build_timing.outputs.build_seconds }}
         CACHE_HIT: ${{ steps.publish.outputs.cache-hit || steps.restore.outputs.cache-hit }}
         EVIDENCE_PATH: ${{ steps.publish.outputs.evidence-path || steps.restore.outputs.evidence-path }}
+        STORAGE_KEY: ${{ steps.scope.outputs.cache_scope }}
+        BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+        GITHUB_TOKEN: ${{ github.token }}
         SOURCE_SHA: ${{ steps.scope.outputs.source_sha }}
       run: |
         set -euo pipefail
@@ -138,6 +141,7 @@ runs:
           --cache-hit "$CACHE_HIT" \
           --source-repository qdrant/qdrant \
           --source-sha "$SOURCE_SHA" \
+          --storage-key "$STORAGE_KEY" \
           --evidence "$EVIDENCE_PATH"
     - name: Retain the benchmark phase evidence
       uses: actions/upload-artifact@v6
